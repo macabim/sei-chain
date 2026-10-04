@@ -20,4 +20,4 @@ jobs:
       - name: Check log transport and existing WebSocket behavior
         run: go test -p 2 ./evmrpc -run '^(TestMacabimWSLogsParity|TestFilterNew|TestFilterUninstall|TestSubscribeNewHeads)$' -count=1 -timeout=15m
       - name: Build node without installing it
-        run: make build
+        run: make build VERSION=v0.0.0-macabim-main-53168c2d1ebc-ws
