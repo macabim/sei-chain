@@ -320,6 +320,23 @@ func NewEVMWebSocketServer(
 			}, &SubscriptionConfig{subscriptionCapacity: 100, newHeadLimit: config.MaxSubscriptionsNewHead}, &FilterConfig{timeout: config.FilterTimeout, maxLog: config.MaxLogNoBlock, maxBlock: config.MaxBlocksForLog}, ConnectionTypeWS, blockHeaderNotifier),
 		},
 		{
+			Namespace: "eth",
+			Service: NewFilterAPI(
+				tmClient,
+				k,
+				ctxProvider,
+				txConfigProvider,
+				&FilterConfig{timeout: config.FilterTimeout, maxLog: config.MaxLogNoBlock, maxBlock: config.MaxBlocksForLog},
+				ConnectionTypeWS,
+				"eth",
+				dbReadSemaphore,
+				globalBlockCache,
+				cacheCreationMutex,
+				globalLogSlicePool,
+				watermarks,
+			),
+		},
+		{
 			Namespace: "web3",
 			Service:   &Web3API{},
 		},
