@@ -18,6 +18,8 @@ jobs:
           go-version: '1.25.6'
           cache: true
       - name: Check log transport and existing WebSocket behavior
-        run: go test -p 2 ./evmrpc -run '^(TestMacabimWSLogsParity|TestFilterNew|TestFilterUninstall|TestSubscribeNewHeads)$' -count=1 -timeout=15m
+        run: go test -p 2 ./evmrpc -run '^(TestMacabim|TestFilterNew|TestFilterUninstall|TestSubscribeNewHeads)' -count=1 -timeout=15m
+      - name: Check subscription and log races
+        run: go test -race -p 2 ./evmrpc -run '^TestMacabim' -count=1 -timeout=15m
       - name: Build node without installing it
         run: make build VERSION=v6.6.3-macabim-ws

@@ -229,6 +229,7 @@ func (a *SubscriptionAPI) Logs(ctx context.Context, filter *filters.FilterCriter
 	}
 
 	rpcSub := notifier.CreateSubscription()
+	subCtx, cancel := bindSubscriptionContext(ctx, rpcSub.Err())
 
 	// Track subscription metrics
 	wpMetrics := GetGlobalMetrics()
@@ -239,8 +240,12 @@ func (a *SubscriptionAPI) Logs(ctx context.Context, filter *filters.FilterCriter
 			var err error
 			defer recoverAndLog()
 			defer wpMetrics.RecordSubscriptionEnd()
-			logs, _, err := a.logFetcher.GetLogsByFilters(ctx, *filter, 0)
+			defer cancel()
+			logs, _, err := a.logFetcher.GetLogsByFilters(subCtx, *filter, 0)
 			if err != nil {
+				if subCtx.Err() != nil {
+					return
+				}
 				wpMetrics.RecordSubscriptionError()
 				_ = notifier.Notify(rpcSub.ID, err)
 				return
@@ -258,12 +263,39 @@ func (a *SubscriptionAPI) Logs(ctx context.Context, filter *filters.FilterCriter
 		var err error
 		defer recoverAndLog()
 		defer wpMetrics.RecordSubscriptionEnd()
+		defer cancel()
 		begin := int64(0)
+		wait := func() bool {
+			timer := time.NewTimer(SleepInterval)
+			defer timer.Stop()
+			select {
+			case <-subCtx.Done():
+				return false
+			case <-timer.C:
+				return true
+			}
+		}
 		for {
+			if subCtx.Err() != nil {
+				return
+			}
+			// An idle head is not an invalid range. Keep the next block cursor.
+			if begin > 0 {
+				latest, latestErr := a.logFetcher.latestHeight(subCtx)
+				if latestErr == nil && latest <= begin {
+					if !wait() {
+						return
+					}
+					continue
+				}
+			}
 			var logs []*ethtypes.Log
 			var lastToHeight int64
-			logs, lastToHeight, err = a.logFetcher.GetLogsByFilters(ctx, *filter, begin)
+			logs, lastToHeight, err = a.logFetcher.GetLogsByFilters(subCtx, *filter, begin)
 			if err != nil {
+				if subCtx.Err() != nil {
+					return
+				}
 				wpMetrics.RecordSubscriptionError()
 				_ = notifier.Notify(rpcSub.ID, err)
 				return
@@ -278,11 +310,26 @@ func (a *SubscriptionAPI) Logs(ctx context.Context, filter *filters.FilterCriter
 			}
 			begin = lastToHeight
 			filter.FromBlock = big.NewInt(lastToHeight + 1)
-			time.Sleep(SleepInterval)
+			if !wait() {
+				return
+			}
 		}
 	}()
 
 	return rpcSub, nil
+}
+
+// Keep request values while binding cancellation to the subscription lifetime.
+func bindSubscriptionContext(ctx context.Context, subErr <-chan error) (context.Context, context.CancelFunc) {
+	subCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	go func() {
+		select {
+		case <-subErr:
+			cancel()
+		case <-subCtx.Done():
+		}
+	}()
+	return subCtx, cancel
 }
 
 const SubscriberPrefix = "evm.rpc."
