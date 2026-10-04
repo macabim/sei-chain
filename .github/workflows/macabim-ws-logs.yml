@@ -1,6 +1,10 @@
 name: Macabim WS log validation
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - codex/native-ws-getlogs-main
+      - codex/native-ws-getlogs-v6.6.3
 permissions:
   contents: read
 jobs:
