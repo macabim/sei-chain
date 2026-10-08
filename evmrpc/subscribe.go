@@ -281,6 +281,18 @@ func (a *SubscriptionAPI) Logs(ctx context.Context, filter *filters.FilterCriter
 		defer cancel()
 		begin := int64(0)
 		for {
+			// An idle head is not an invalid range. Keep the next block cursor.
+			if begin > 0 {
+				latest, latestErr := a.logFetcher.latestHeight(subCtx)
+				if latestErr == nil && latest <= begin {
+					select {
+					case <-subCtx.Done():
+						return
+					case <-time.After(SleepInterval):
+					}
+					continue
+				}
+			}
 			var logs []*ethtypes.Log
 			var lastToHeight int64
 			logs, lastToHeight, err = a.logFetcher.getLogsByFiltersWithBackoff(subCtx, *filter, begin)

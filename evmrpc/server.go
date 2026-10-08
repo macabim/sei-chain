@@ -316,6 +316,23 @@ func NewEVMWebSocketServer(
 			}, &SubscriptionConfig{subscriptionCapacity: 100, newHeadLimit: config.MaxSubscriptionsNewHead, logLimit: config.MaxSubscriptionsLogs}, &FilterConfig{timeout: config.FilterTimeout, maxLog: config.MaxLogNoBlock, maxLogBytes: config.MaxLogBytes, maxBlock: config.MaxBlocksForLog}, ConnectionTypeWS, blockHeaderNotifier),
 		},
 		{
+			Namespace: "eth",
+			Service: NewFilterAPI(
+				tmClient,
+				k,
+				ctxProvider,
+				txConfigProvider,
+				&FilterConfig{timeout: config.FilterTimeout, maxLog: config.MaxLogNoBlock, maxLogBytes: config.MaxLogBytes, maxBlock: config.MaxBlocksForLog},
+				ConnectionTypeWS,
+				"eth",
+				dbReadSemaphore,
+				globalBlockCache,
+				cacheCreationMutex,
+				globalLogSlicePool,
+				watermarks,
+			),
+		},
+		{
 			Namespace: "web3",
 			Service:   &Web3API{},
 		},
