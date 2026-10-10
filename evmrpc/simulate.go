@@ -119,15 +119,23 @@ func simulationContext(ctx context.Context, timeout time.Duration) (context.Cont
 	return context.WithCancel(ctx)
 }
 
+func finishSimulation(ctx context.Context, method string, connection ConnectionType, start time.Time, err error, panicValue any) error {
+	if ctx.Err() != nil {
+		err = fmt.Errorf("request timed out: %w", ctx.Err())
+		if cause, ok := panicValue.(error); ok && (errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded)) {
+			panicValue = nil
+		}
+	}
+	recordMetricsWithError(ctx, method, connection, start, err, panicValue)
+	return err
+}
+
 func (s *SimulationAPI) EstimateGas(ctx context.Context, args export.TransactionArgs, blockNrOrHash *rpc.BlockNumberOrHash, overrides *export.StateOverride) (result hexutil.Uint64, returnErr error) {
 	ctx, cancel := simulationContext(ctx, s.backend.RPCEVMTimeout())
 	defer cancel()
 	startTime := time.Now()
 	defer func() {
-		if ctx.Err() != nil {
-			returnErr = fmt.Errorf("request timed out: %w", ctx.Err())
-		}
-		recordMetricsWithError(ctx, "eth_estimateGas", s.connectionType, startTime, returnErr, recover())
+		returnErr = finishSimulation(ctx, "eth_estimateGas", s.connectionType, startTime, returnErr, recover())
 	}()
 	if returnErr = validateStateOverrides(overrides, s.backend.MaxStateOverrideAccounts(), s.backend.MaxStateOverrideSlots()); returnErr != nil {
 		return
@@ -154,10 +162,7 @@ func (s *SimulationAPI) EstimateGasAfterCalls(ctx context.Context, args export.T
 	defer cancel()
 	startTime := time.Now()
 	defer func() {
-		if ctx.Err() != nil {
-			returnErr = fmt.Errorf("request timed out: %w", ctx.Err())
-		}
-		recordMetricsWithError(ctx, "eth_estimateGasAfterCalls", s.connectionType, startTime, returnErr, recover())
+		returnErr = finishSimulation(ctx, "eth_estimateGasAfterCalls", s.connectionType, startTime, returnErr, recover())
 	}()
 	// Reject over-sized requests early, before any state wrapping or resource acquisition.
 	if maxCalls := s.backend.MaxEstimateGasCalls(); maxCalls > 0 && len(calls) > maxCalls {
@@ -189,10 +194,7 @@ func (s *SimulationAPI) Call(ctx context.Context, args export.TransactionArgs, b
 	defer cancel()
 	startTime := time.Now()
 	defer func() {
-		if ctx.Err() != nil {
-			returnErr = fmt.Errorf("request timed out: %w", ctx.Err())
-		}
-		recordMetricsWithError(ctx, "eth_call", s.connectionType, startTime, returnErr, recover())
+		returnErr = finishSimulation(ctx, "eth_call", s.connectionType, startTime, returnErr, recover())
 	}()
 	if returnErr = validateStateOverrides(overrides, s.backend.MaxStateOverrideAccounts(), s.backend.MaxStateOverrideSlots()); returnErr != nil {
 		return
