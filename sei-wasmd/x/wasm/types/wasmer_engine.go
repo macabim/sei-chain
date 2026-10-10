@@ -1,6 +1,8 @@
 package types
 
 import (
+	"context"
+
 	storetypes "github.com/sei-protocol/sei-chain/sei-cosmos/store/types"
 	wasmvm "github.com/sei-protocol/sei-chain/sei-wasmvm"
 	wasmvmtypes "github.com/sei-protocol/sei-chain/sei-wasmvm/types"
@@ -248,6 +250,7 @@ var _ wasmvm.KVStore = &StoreAdapter{}
 // StoreAdapter adapter to bridge SDK store impl to wasmvm
 type StoreAdapter struct {
 	parent storetypes.KVStore
+	ctx    context.Context
 }
 
 // NewStoreAdapter constructor
@@ -256,6 +259,20 @@ func NewStoreAdapter(s storetypes.KVStore) *StoreAdapter {
 		panic("store must not be nil")
 	}
 	return &StoreAdapter{parent: s}
+}
+
+// WithContext returns a store adapter with the caller context.
+func (s StoreAdapter) WithContext(ctx context.Context) StoreAdapter {
+	s.ctx = ctx
+	return s
+}
+
+// Context returns the caller context.
+func (s StoreAdapter) Context() context.Context {
+	if s.ctx == nil {
+		return context.Background()
+	}
+	return s.ctx
 }
 
 func (s StoreAdapter) Get(key []byte) []byte {

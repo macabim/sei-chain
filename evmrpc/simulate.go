@@ -112,10 +112,30 @@ func (s *SimulationAPI) CreateAccessList(ctx context.Context, args export.Transa
 	return result, nil
 }
 
+func simulationContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout > 0 {
+		return context.WithTimeout(ctx, timeout)
+	}
+	return context.WithCancel(ctx)
+}
+
+func finishSimulation(ctx context.Context, method string, connection ConnectionType, start time.Time, err error, panicValue any) error {
+	if ctx.Err() != nil {
+		err = fmt.Errorf("request timed out: %w", ctx.Err())
+		if cause, ok := panicValue.(error); ok && (errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded)) {
+			panicValue = nil
+		}
+	}
+	recordMetricsWithError(ctx, method, connection, start, err, panicValue)
+	return err
+}
+
 func (s *SimulationAPI) EstimateGas(ctx context.Context, args export.TransactionArgs, blockNrOrHash *rpc.BlockNumberOrHash, overrides *export.StateOverride) (result hexutil.Uint64, returnErr error) {
+	ctx, cancel := simulationContext(ctx, s.backend.RPCEVMTimeout())
+	defer cancel()
 	startTime := time.Now()
 	defer func() {
-		recordMetricsWithError(ctx, "eth_estimateGas", s.connectionType, startTime, returnErr, recover())
+		returnErr = finishSimulation(ctx, "eth_estimateGas", s.connectionType, startTime, returnErr, recover())
 	}()
 	if returnErr = validateStateOverrides(overrides, s.backend.MaxStateOverrideAccounts(), s.backend.MaxStateOverrideSlots()); returnErr != nil {
 		return
@@ -138,9 +158,11 @@ func (s *SimulationAPI) EstimateGas(ctx context.Context, args export.Transaction
 }
 
 func (s *SimulationAPI) EstimateGasAfterCalls(ctx context.Context, args export.TransactionArgs, calls []export.TransactionArgs, blockNrOrHash *rpc.BlockNumberOrHash, overrides *export.StateOverride) (result hexutil.Uint64, returnErr error) {
+	ctx, cancel := simulationContext(ctx, s.backend.RPCEVMTimeout())
+	defer cancel()
 	startTime := time.Now()
 	defer func() {
-		recordMetricsWithError(ctx, "eth_estimateGasAfterCalls", s.connectionType, startTime, returnErr, recover())
+		returnErr = finishSimulation(ctx, "eth_estimateGasAfterCalls", s.connectionType, startTime, returnErr, recover())
 	}()
 	// Reject over-sized requests early, before any state wrapping or resource acquisition.
 	if maxCalls := s.backend.MaxEstimateGasCalls(); maxCalls > 0 && len(calls) > maxCalls {
@@ -168,9 +190,11 @@ func (s *SimulationAPI) EstimateGasAfterCalls(ctx context.Context, args export.T
 }
 
 func (s *SimulationAPI) Call(ctx context.Context, args export.TransactionArgs, blockNrOrHash *rpc.BlockNumberOrHash, overrides *export.StateOverride, blockOverrides *export.BlockOverrides) (result hexutil.Bytes, returnErr error) {
+	ctx, cancel := simulationContext(ctx, s.backend.RPCEVMTimeout())
+	defer cancel()
 	startTime := time.Now()
 	defer func() {
-		recordMetricsWithError(ctx, "eth_call", s.connectionType, startTime, returnErr, recover())
+		returnErr = finishSimulation(ctx, "eth_call", s.connectionType, startTime, returnErr, recover())
 	}()
 	if returnErr = validateStateOverrides(overrides, s.backend.MaxStateOverrideAccounts(), s.backend.MaxStateOverrideSlots()); returnErr != nil {
 		return
@@ -360,7 +384,7 @@ func (b *Backend) StateAndHeaderByNumberOrHash(ctx context.Context, blockNrOrHas
 		}
 	}
 	isWasmdCall, ok := ctx.Value(CtxIsWasmdPrecompileCallKey).(bool)
-	sdkCtx = sdkCtx.WithIsEVM(true).WithEVMEntryViaWasmdPrecompile(ok && isWasmdCall)
+	sdkCtx = sdkCtx.WithContext(ctx).WithIsEVM(true).WithEVMEntryViaWasmdPrecompile(ok && isWasmdCall)
 	if cp := sdkCtx.ConsensusParams(); cp != nil && cp.Block != nil {
 		header.GasLimit = uint64(cp.Block.MaxGas) //nolint:gosec
 	}
@@ -758,7 +782,11 @@ func releaseOnContextPanic(release func(), recovered any) error {
 	panic(recovered)
 }
 
-func (b *Backend) GetEVM(_ context.Context, msg *core.Message, stateDB vm.StateDB, h *ethtypes.Header, vmConfig *vm.Config, blockCtx *vm.BlockContext) *vm.EVM {
+func (b *Backend) GetEVM(ctx context.Context, msg *core.Message, stateDB vm.StateDB, h *ethtypes.Header, vmConfig *vm.Config, blockCtx *vm.BlockContext) *vm.EVM {
+	// The call deadline is created after state resolution. Attach it before execution.
+	if db := state.GetDBImpl(stateDB); db != nil {
+		db.WithCtx(db.Ctx().WithContext(ctx))
+	}
 	txContext := core.NewEVMTxContext(msg)
 	if blockCtx == nil {
 		blockCtx, _ = b.keeper.GetVMBlockContext(b.ctxProvider(LatestCtxHeight).WithIsEVM(true).WithEVMEntryViaWasmdPrecompile(wasmd.IsWasmdCall(msg.To)), b.keeper.GetGasPool())
