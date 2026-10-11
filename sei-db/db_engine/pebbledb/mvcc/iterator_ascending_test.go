@@ -252,6 +252,7 @@ func TestAscendingReverseIteratorAcrossVersionBlocks(t *testing.T) {
 		}
 	}
 	applyVersion(t, db, ascIterTestStore, 301, keys[2], nil)
+	require.NoError(t, db.storage.Flush())
 	for _, height := range []int64{1, 150, 300, 301} {
 		itr, err := db.ReverseIterator(ascIterTestStore, height, []byte("a"), []byte("c"))
 		require.NoError(t, err)
