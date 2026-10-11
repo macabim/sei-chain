@@ -242,3 +242,36 @@ func lastLinesOfOutput(s string, n int) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+func TestAscendingReverseIteratorAcrossVersionBlocks(t *testing.T) {
+	db := newAscendingIterTestDB(t)
+	keys := [][]byte{[]byte("a"), []byte("a\x00"), []byte("aa"), []byte("b")}
+	for v := int64(1); v <= 300; v++ {
+		for _, key := range keys {
+			applyVersion(t, db, ascIterTestStore, v, key, []byte(fmt.Sprintf("v%d", v)))
+		}
+	}
+	applyVersion(t, db, ascIterTestStore, 301, keys[2], nil)
+	require.NoError(t, db.storage.Flush())
+	for _, height := range []int64{1, 150, 300, 301} {
+		itr, err := db.ReverseIterator(ascIterTestStore, height, []byte("a"), []byte("c"))
+		require.NoError(t, err)
+		expected := []string{"b", "aa", "a\x00", "a"}
+		if height == 301 {
+			expected = []string{"b", "a\x00", "a"}
+		}
+		var got []string
+		for ; itr.Valid(); itr.Next() {
+			require.Less(t, len(got), len(expected), "reverse iteration must advance")
+			got = append(got, string(itr.Key()))
+			valueHeight := height
+			if valueHeight == 301 {
+				valueHeight = 300
+			}
+			require.Equal(t, []byte(fmt.Sprintf("v%d", valueHeight)), itr.Value())
+		}
+		require.NoError(t, itr.Error())
+		require.NoError(t, itr.Close())
+		require.Equal(t, expected, got)
+	}
+}
