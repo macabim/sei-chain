@@ -5,7 +5,9 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
 	"sync"
+	"time"
 
 	"github.com/cockroachdb/pebble/v2"
 	"go.opentelemetry.io/otel/attribute"
@@ -43,6 +45,8 @@ type ascendingIterator struct {
 	operationMetrics   *pebbledbmetrics.OperationMetrics
 	ctx                context.Context
 	err                error
+	scanSteps          int64
+	started            time.Time
 
 	closeSync sync.Once
 }
@@ -52,6 +56,7 @@ func newAscendingIterator(ctx context.Context, src *pebble.Iterator, prefix, mvc
 	if version < earliestVersion {
 		return &ascendingIterator{
 			source:           src,
+			started:          time.Now(),
 			prefix:           prefix,
 			start:            mvccStart,
 			end:              mvccEnd,
@@ -74,6 +79,7 @@ func newAscendingIterator(ctx context.Context, src *pebble.Iterator, prefix, mvc
 
 	itr := &ascendingIterator{
 		source:           src,
+		started:          time.Now(),
 		prefix:           prefix,
 		start:            mvccStart,
 		end:              mvccEnd,
@@ -195,6 +201,7 @@ func (itr *ascendingIterator) prevLogicalKey(currKey []byte) ([]byte, bool) {
 func (itr *ascendingIterator) positionAtOrAfterKey(startKey []byte) {
 	currentKey := startKey
 	for {
+		itr.scanSteps++
 		if err := abortIfCancelled(itr.ctx); err != nil {
 			itr.err = err
 			itr.valid = false
@@ -220,6 +227,7 @@ func (itr *ascendingIterator) positionAtOrAfterKey(startKey []byte) {
 func (itr *ascendingIterator) positionAtOrBeforeKey(startKey []byte) {
 	currentKey := startKey
 	for {
+		itr.scanSteps++
 		if err := abortIfCancelled(itr.ctx); err != nil {
 			itr.err = err
 			itr.valid = false
@@ -369,6 +377,9 @@ func (itr *ascendingIterator) Error() error {
 
 func (itr *ascendingIterator) Close() error {
 	itr.closeSync.Do(func() {
+		if itr.ctx.Err() != nil || itr.scanSteps > 10000 {
+			fmt.Fprintf(os.Stderr, "WASM_SCAN store=%s reverse=%t start=%x end=%x steps=%d next=%d reads=%d elapsed=%s err=%v\n", itr.storeKey, itr.reverse, itr.start, itr.end, itr.scanSteps, itr.iterationCount, itr.readCount, time.Since(itr.started), itr.ctx.Err())
+		}
 		_ = itr.source.Close()
 		itr.source = nil
 		itr.valid = false
