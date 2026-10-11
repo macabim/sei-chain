@@ -5,9 +5,7 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"os"
 	"sync"
-	"time"
 
 	"github.com/cockroachdb/pebble/v2"
 	"go.opentelemetry.io/otel/attribute"
@@ -45,8 +43,6 @@ type ascendingIterator struct {
 	operationMetrics   *pebbledbmetrics.OperationMetrics
 	ctx                context.Context
 	err                error
-	scanSteps          int64
-	started            time.Time
 
 	closeSync sync.Once
 }
@@ -56,7 +52,6 @@ func newAscendingIterator(ctx context.Context, src *pebble.Iterator, prefix, mvc
 	if version < earliestVersion {
 		return &ascendingIterator{
 			source:           src,
-			started:          time.Now(),
 			prefix:           prefix,
 			start:            mvccStart,
 			end:              mvccEnd,
@@ -79,7 +74,6 @@ func newAscendingIterator(ctx context.Context, src *pebble.Iterator, prefix, mvc
 
 	itr := &ascendingIterator{
 		source:           src,
-		started:          time.Now(),
 		prefix:           prefix,
 		start:            mvccStart,
 		end:              mvccEnd,
@@ -141,6 +135,17 @@ func (itr *ascendingIterator) visibleVersionUpperBound(key []byte) []byte {
 // and re-checked rather than inferred from the seek bound, so an unparsable
 // version is skipped instead of being reported as visible.
 func (itr *ascendingIterator) seekVisibleVersionForKey(targetKey []byte) bool {
+	// Reverse traversal lands on the newest version of each logical key.
+	// Keep the cursor when that version is already visible.
+	if itr.reverse && itr.source.Valid() {
+		key, version, ok := SplitMVCCKey(itr.source.Key())
+		if ok && bytes.Equal(key, targetKey) {
+			decoded, err := decodeUint64Ascending(version)
+			if err == nil && decoded < math.MaxInt64 && decoded <= itr.version {
+				return true
+			}
+		}
+	}
 	if !itr.source.SeekLT(itr.visibleVersionUpperBound(targetKey)) {
 		return false
 	}
@@ -185,6 +190,23 @@ func (itr *ascendingIterator) nextLogicalKey(currKey []byte) ([]byte, bool) {
 // prevLogicalKey returns the logical key ordered immediately before every
 // version of currKey.
 func (itr *ascendingIterator) prevLogicalKey(currKey []byte) ([]byte, bool) {
+	// Step within the current block before seeking across older versions.
+	// A failed visibility seek can already have moved to another key.
+	if itr.source.Valid() {
+		key, _, ok := SplitMVCCKey(itr.source.Key())
+		if ok && bytes.Equal(key, currKey) {
+			if !itr.source.Prev() {
+				return nil, false
+			}
+			key, _, ok = SplitMVCCKey(itr.source.Key())
+			if ok && !bytes.Equal(key, currKey) {
+				if !bytes.HasPrefix(key, itr.prefix) {
+					return nil, false
+				}
+				return key, true
+			}
+		}
+	}
 	if !itr.source.SeekLT(MVCCEncodeAscending(currKey, 0)) {
 		return nil, false
 	}
@@ -201,7 +223,6 @@ func (itr *ascendingIterator) prevLogicalKey(currKey []byte) ([]byte, bool) {
 func (itr *ascendingIterator) positionAtOrAfterKey(startKey []byte) {
 	currentKey := startKey
 	for {
-		itr.scanSteps++
 		if err := abortIfCancelled(itr.ctx); err != nil {
 			itr.err = err
 			itr.valid = false
@@ -227,7 +248,6 @@ func (itr *ascendingIterator) positionAtOrAfterKey(startKey []byte) {
 func (itr *ascendingIterator) positionAtOrBeforeKey(startKey []byte) {
 	currentKey := startKey
 	for {
-		itr.scanSteps++
 		if err := abortIfCancelled(itr.ctx); err != nil {
 			itr.err = err
 			itr.valid = false
@@ -377,9 +397,6 @@ func (itr *ascendingIterator) Error() error {
 
 func (itr *ascendingIterator) Close() error {
 	itr.closeSync.Do(func() {
-		if itr.ctx.Err() != nil || itr.scanSteps > 10000 {
-			fmt.Fprintf(os.Stderr, "WASM_SCAN store=%s reverse=%t start=%x end=%x steps=%d next=%d reads=%d elapsed=%s err=%v\n", itr.storeKey, itr.reverse, itr.start, itr.end, itr.scanSteps, itr.iterationCount, itr.readCount, time.Since(itr.started), itr.ctx.Err())
-		}
 		_ = itr.source.Close()
 		itr.source = nil
 		itr.valid = false
