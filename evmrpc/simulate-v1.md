@@ -21,5 +21,10 @@ Total gas is bounded by the block limit and RPC gas cap, with a 50,000,000 fallb
 An explicit call gas limit above the remaining budget is rejected instead of silently reduced.
 VM reverts produce failed call results. Invalid transactions or exhausted request limits fail the request.
 
-Also replay real pending swaps and verify that a subsequent call sees their effects.
-Keep mempool trades disabled until the separate Macabim activation review completes.
+Macabim uses the pending subscription patch to receive EVM transactions from the node mempool.
+Trader simulates each target through this method to discover pool changes and search for backruns.
+The optional target-plus-backrun check uses the same method with two ordered calls.
+Sei currently disables that second check to reduce latency; target simulation remains enabled.
+See [Macabim simulation documentation](https://github.com/macabim/Macabim/blob/main/docs/trader/simulation.md) for trading configuration.
+
+Deploy this fork from `production/v6.7`. Keep pending subscriptions and simulation patches when updating the upstream release.
