@@ -225,22 +225,10 @@ func (t *TransactionAPI) GetTransactionByHash(ctx context.Context, hash common.H
 				logger.Error("failed to recover sender", "err", err, "tx", etx.Hash()) // codecov:ignore
 				return nil, err                                                        // codecov:ignore
 			}
-			v, r, s := etx.RawSignatureValues()
-			res := export.RPCTransaction{
-				Type:     hexutil.Uint64(etx.Type()),
-				From:     from,
-				Gas:      hexutil.Uint64(etx.Gas()),
-				GasPrice: (*hexutil.Big)(etx.GasPrice()),
-				Hash:     etx.Hash(),
-				Input:    hexutil.Bytes(etx.Data()),
-				Nonce:    hexutil.Uint64(etx.Nonce()),
-				To:       etx.To(),
-				Value:    (*hexutil.Big)(etx.Value()),
-				V:        (*hexutil.Big)(v),
-				R:        (*hexutil.Big)(r),
-				S:        (*hexutil.Big)(s),
-			}
-			return &res, nil
+			chainConfig := types.DefaultChainConfig().EthereumConfig(t.keeper.ChainID(sdkCtx))
+			res := export.NewRPCPendingTransaction(etx, nil, chainConfig)
+			res.From = from
+			return res, nil
 		}
 	}
 

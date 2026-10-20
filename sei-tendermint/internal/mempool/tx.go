@@ -122,10 +122,12 @@ func (s txStoreState) PendingBytes() uint64 { return s.total.bytes - s.ready.byt
 func (s txStoreState) PendingCount() int    { return s.total.count - s.ready.count }
 
 type txStoreInner struct {
-	byHash    map[types.TxHash]*WrappedTx
-	byEvmHash map[common.Hash]*WrappedTx
-	byNonce   map[evmAddrNonce]*WrappedTx
-	accounts  map[common.Address]*evmAccount
+	pendingSubscribers map[chan common.Hash]struct{}
+	pendingReady       []common.Hash
+	byHash             map[types.TxHash]*WrappedTx
+	byEvmHash          map[common.Hash]*WrappedTx
+	byNonce            map[evmAddrNonce]*WrappedTx
+	accounts           map[common.Address]*evmAccount
 
 	softLimit txCounter
 	hardLimit txCounter
@@ -174,15 +176,16 @@ func NewTxStore(cfg *Config, app *proxy.Proxy) *txStore {
 	softLimit := txCounter{count: cfg.Size + cfg.PendingSize, bytes: utils.Clamp[uint64](cfg.MaxTxsBytes + cfg.MaxPendingTxsBytes)}
 	hardLimit := txCounter{count: 2 * softLimit.count, bytes: 2 * softLimit.bytes}
 	inner := &txStoreInner{
-		byHash:    map[types.TxHash]*WrappedTx{},
-		byEvmHash: map[common.Hash]*WrappedTx{},
-		byNonce:   map[evmAddrNonce]*WrappedTx{},
-		accounts:  map[common.Address]*evmAccount{},
-		softLimit: softLimit,
-		hardLimit: hardLimit,
-		state:     utils.NewAtomicSend(txStoreState{}),
-		cache:     newLRUCache[types.TxHash, utils.Option[cacheEvm]](cfg.CacheSize),
-		failedTxs: newLRUCache[types.TxHash, struct{}](cfg.CacheSize),
+		pendingSubscribers: make(map[chan common.Hash]struct{}),
+		byHash:             map[types.TxHash]*WrappedTx{},
+		byEvmHash:          map[common.Hash]*WrappedTx{},
+		byNonce:            map[evmAddrNonce]*WrappedTx{},
+		accounts:           map[common.Address]*evmAccount{},
+		softLimit:          softLimit,
+		hardLimit:          hardLimit,
+		state:              utils.NewAtomicSend(txStoreState{}),
+		cache:              newLRUCache[types.TxHash, utils.Option[cacheEvm]](cfg.CacheSize),
+		failedTxs:          newLRUCache[types.TxHash, struct{}](cfg.CacheSize),
 	}
 	return &txStore{
 		config:            cfg,
@@ -410,7 +413,7 @@ func (s *txStore) insert(inner *txStoreInner, wtx *WrappedTx, recordAdded bool) 
 				state.ready.Dec(old.Size())
 				state.ready.Inc(wtx.Size())
 				s.priorityReservoir.Add(wtx.priority)
-				wtx.readyEl = utils.Some(s.readyTxs.PushBack(wtx.Tx()))
+				s.markReady(inner, wtx)
 			}
 		}
 		state.total.Inc(wtx.Size())
@@ -431,7 +434,7 @@ func (s *txStore) insert(inner *txStoreInner, wtx *WrappedTx, recordAdded bool) 
 			state.ready.Inc(wtx.Size())
 			if !wtx.readyEl.IsPresent() {
 				s.priorityReservoir.Add(wtx.priority)
-				wtx.readyEl = utils.Some(s.readyTxs.PushBack(wtx.Tx()))
+				s.markReady(inner, wtx)
 				if !recordAdded || wtx != newTx || !insertedAtNextNonce {
 					recordPendingNonceAccepted()
 				}
@@ -443,7 +446,7 @@ func (s *txStore) insert(inner *txStoreInner, wtx *WrappedTx, recordAdded bool) 
 		state.ready.Inc(wtx.Size())
 		if !wtx.readyEl.IsPresent() {
 			s.priorityReservoir.Add(wtx.priority)
-			wtx.readyEl = utils.Some(s.readyTxs.PushBack(wtx.Tx()))
+			s.markReady(inner, wtx)
 		}
 	}
 	inner.byHash[wtx.Hash()] = wtx
@@ -522,6 +525,7 @@ func (s *txStore) Insert(wtx *WrappedTx) error {
 				return errMempoolFull
 			}
 		}
+		inner.publishPending()
 		Global.CacheSizeAt().Set(int64(inner.cache.Size()))
 	}
 	return nil
@@ -529,6 +533,7 @@ func (s *txStore) Insert(wtx *WrappedTx) error {
 
 // O(m log m), prunes transactions above softLimit and recomputes all the indices.
 func (s *txStore) compact(inner *txStoreInner, clearAccounts bool) {
+	defer inner.publishPending()
 	// Order all txs by priority.
 	wtxs := inner.inInclusionOrder()
 	// Reset internal state.

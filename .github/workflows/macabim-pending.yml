@@ -1,0 +1,28 @@
+name: Macabim pending subscriptions
+on:
+  pull_request:
+    branches: [production/v6.7]
+  push:
+    branches: [production/v6.7]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pending:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GOTOOLCHAIN: local
+      GOMAXPROCS: '2'
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.6'
+          cache: true
+      - name: Test pending admission and subscription lifecycle with race detection
+        run: go test -race -p 2 ./sei-tendermint/internal/mempool ./sei-tendermint/internal/rpc/core ./evmrpc -run 'TestPendingSubscriptions|TestMacabimPending' -count=1 -timeout=20m
+      - name: Test existing RPC patches
+        run: go test -p 2 ./evmrpc -run 'TestMacabim|TestFilterNew|TestFilterUninstall|TestSubscribeNewHeads|TestSimulation' -count=1 -timeout=15m
+      - name: Build node
+        run: make build VERSION=v6.7.2-macabim-pending
