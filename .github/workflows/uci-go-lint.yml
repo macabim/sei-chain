@@ -23,3 +23,6 @@ jobs:
     uses: sei-protocol/uci/.github/workflows/go-lint.yml@v0.0.9
     with:
       go-version: '1.25.6'
+  pending-subscriptions:
+    if: github.repository == 'macabim/sei-chain'
+    uses: ./.github/workflows/macabim-pending.yml
