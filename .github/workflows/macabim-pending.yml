@@ -2,6 +2,8 @@ name: Macabim pending subscriptions
 on:
   pull_request:
     branches: [production/v6.7]
+  push:
+    branches: [codex/pending-transactions-v6.7.2]
   workflow_dispatch:
 permissions:
   contents: read
