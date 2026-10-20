@@ -21,6 +21,6 @@ Total gas is bounded by the block limit and RPC gas cap, with a 50,000,000 fallb
 An explicit call gas limit above the remaining budget is rejected instead of silently reduced.
 VM reverts produce failed call results. Invalid transactions or exhausted request limits fail the request.
 
-Run the Macabim `scripts/simulation/check-sei-simulate.py` probe before enabling mempool processing.
+Follow the [Macabim activation checks](https://github.com/macabim/Macabim/blob/codex/sei-mempool-support/docs/trader/simulation.md#sei-activation) before enabling mempool processing.
 Also replay real pending swaps and verify that a subsequent call sees their effects.
 Keep mempool trades disabled until the separate Macabim activation review completes.
