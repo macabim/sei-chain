@@ -97,3 +97,31 @@ func TestPendingSubscriptionsSlowConsumerDoesNotBlock(t *testing.T) {
 	}
 	require.Equal(t, pendingSubscriberBuffer, len(slow))
 }
+
+func TestPendingSubscriptionsExcludeAdmissionEviction(t *testing.T) {
+	rng := utils.TestRng()
+	app := newEVMNonceApp()
+	cfg := TestConfig()
+	cfg.Size = 1
+	cfg.PendingSize = 0
+	store := NewTxStore(cfg, proxy.New(app))
+	ch, release, err := store.SubscribePendingTransactions()
+	require.NoError(t, err)
+	defer release()
+	for i := range 2 {
+		address := common.BytesToAddress([]byte{byte(i + 1)})
+		app.setBalance(address, 100)
+		require.NoError(t, store.Insert(makeEvmTxForTest(rng, address, 0, 10, 1)))
+		_, err := utils.Recv(t.Context(), ch)
+		require.NoError(t, err)
+	}
+	address := common.HexToAddress("0x1234")
+	app.setBalance(address, 100)
+	rejected := makeEvmTxForTest(rng, address, 0, 1, 1)
+	require.ErrorIs(t, store.Insert(rejected), errMempoolFull)
+	select {
+	case <-ch:
+		t.Fatal("evicted insertion published")
+	default:
+	}
+}
