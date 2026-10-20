@@ -41,6 +41,18 @@ func (env *Environment) EvmTxByHash(hash common.Hash) (types.Tx, bool) {
 	return nil, false
 }
 
+// SubscribePendingTransactions returns ready EVM hashes from the legacy local mempool.
+func (env *Environment) SubscribePendingTransactions() (<-chan common.Hash, func(), error) {
+	if env.gigaRouter().IsPresent() {
+		return nil, func() {}, errors.New("pending transaction subscriptions require the legacy local mempool")
+	}
+	mp, err := env.requireMempool()
+	if err != nil {
+		return nil, func() {}, err
+	}
+	return mp.SubscribePendingTransactions()
+}
+
 //-----------------------------------------------------------------------------
 // NOTE: tx should be signed, but this is only checked at the app level (not by Tendermint!)
 
