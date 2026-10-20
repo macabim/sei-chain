@@ -180,7 +180,7 @@ func (s *SimulationAPI) SimulateV1(ctx context.Context, opts SimulateV1Options, 
 			for _, log := range call.Logs {
 				log.BlockNumber = blockCtx.BlockNumber.Uint64()
 				log.TxHash = hash
-				log.TxIndex = uint(i)
+				log.TxIndex = uint(i) //nolint:gosec // i is a nonnegative index bounded by maxSimulateV1Calls.
 				log.Index = logIndex
 				logIndex++
 			}
