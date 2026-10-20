@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -90,7 +91,14 @@ var TestBlockHash = "0x000000000000000000000000000000000000000000000000000000000
 
 var EncodingConfig = app.MakeEncodingConfig()
 var TxConfig = EncodingConfig.TxConfig
-var Encoder = TxConfig.TxEncoder()
+var mockEncoderMutex sync.Mutex
+
+var Encoder = func(tx sdk.Tx) ([]byte, error) {
+	// Cosmos transaction wrappers cache their encoded bytes on the first call.
+	mockEncoderMutex.Lock()
+	defer mockEncoderMutex.Unlock()
+	return TxConfig.TxEncoder()(tx)
+}
 var Decoder = TxConfig.TxDecoder()
 var Tx1 sdk.Tx
 var MultiTxBlockTx1 sdk.Tx
