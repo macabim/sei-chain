@@ -47,14 +47,26 @@ func (s *txStore) SubscribePendingTransactions() (<-chan common.Hash, func(), er
 
 func (s *txStore) markReady(inner *txStoreInner, wtx *WrappedTx) {
 	wtx.readyEl = utils.Some(s.readyTxs.PushBack(wtx.Tx()))
-	if evm, ok := wtx.evm.Get(); ok {
+	if evm, ok := wtx.evm.Get(); ok && len(inner.pendingSubscribers) > 0 {
+		inner.pendingReady = append(inner.pendingReady, evm.hash)
+	}
+}
+
+func (inner *txStoreInner) publishPending() {
+	for _, hash := range inner.pendingReady {
+		// Compaction can evict an insertion before admission completes.
+		tx, present := inner.byEvmHash[hash]
+		if !present || !inner.isReady(tx) {
+			continue
+		}
 		for ch := range inner.pendingSubscribers {
 			// The store lock also protects lookup and unsubscribe. Never wait for RPC consumers.
 			select {
-			case ch <- evm.hash:
+			case ch <- hash:
 			default:
 				pendingSubscriptionDrops.Inc()
 			}
 		}
 	}
+	inner.pendingReady = inner.pendingReady[:0]
 }

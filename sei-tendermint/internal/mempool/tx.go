@@ -123,6 +123,7 @@ func (s txStoreState) PendingCount() int    { return s.total.count - s.ready.cou
 
 type txStoreInner struct {
 	pendingSubscribers map[chan common.Hash]struct{}
+	pendingReady       []common.Hash
 	byHash             map[types.TxHash]*WrappedTx
 	byEvmHash          map[common.Hash]*WrappedTx
 	byNonce            map[evmAddrNonce]*WrappedTx
@@ -524,6 +525,7 @@ func (s *txStore) Insert(wtx *WrappedTx) error {
 				return errMempoolFull
 			}
 		}
+		inner.publishPending()
 		Global.CacheSizeAt().Set(int64(inner.cache.Size()))
 	}
 	return nil
@@ -531,6 +533,7 @@ func (s *txStore) Insert(wtx *WrappedTx) error {
 
 // O(m log m), prunes transactions above softLimit and recomputes all the indices.
 func (s *txStore) compact(inner *txStoreInner, clearAccounts bool) {
+	defer inner.publishPending()
 	// Order all txs by priority.
 	wtxs := inner.inInclusionOrder()
 	// Reset internal state.
