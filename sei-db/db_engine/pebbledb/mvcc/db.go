@@ -193,7 +193,11 @@ func newPebbleOptions(config config.StateStoreConfig, cache *pebble.Cache) *pebb
 }
 
 func OpenDB(dataDir string, config config.StateStoreConfig) (types.StateStore, error) {
-	cache := pebble.NewCache(1024 * 1024 * 32)
+	cacheBytes, err := blockCacheBytes()
+	if err != nil {
+		return nil, err
+	}
+	cache := pebble.NewCache(cacheBytes)
 	defer cache.Unref()
 
 	opts := newPebbleOptions(config, cache)
@@ -201,6 +205,7 @@ func OpenDB(dataDir string, config config.StateStoreConfig) (types.StateStore, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to open PebbleDB: %w", err)
 	}
+	logger.Info("opened MVCC block cache", "directory", dataDir, "capacity_bytes", cacheBytes)
 
 	descending, err := detectMVCCMode(db)
 	if err != nil {

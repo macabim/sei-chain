@@ -50,5 +50,10 @@ The responsibility and functions of SS include the following:
 - Provide pruning functionality
 
 ### DB Backend
+
+Set `SEI_SS_MVCC_BLOCK_CACHE_MIB` in the node environment to size each MVCC Pebble block cache in MiB.
+The default is 32 MiB per database. Use a positive whole number, such as `512`, `2048`, or `4096`.
+Restart the node to apply the capacity. This cache holds decoded blocks and does not change historical query semantics.
+
 Extensive benchmarking was conducted with Sei chain key-value data measuring random write, read and forward / back iteration performance for LevelDB, RocksDB, PebbleDB, and SQLite.
 Our benchmarks shows that PebbleDB performs the best among these database backends, which is why SeiDB SS store use PebbleDB as the recommended default backend.

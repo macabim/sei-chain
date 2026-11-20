@@ -1,6 +1,8 @@
 package keeper
 
 import (
+	"context"
+
 	"errors"
 	"sync"
 	"time"
@@ -22,6 +24,35 @@ func NewVMWrapper(inner types.WasmerEngine) types.WasmerEngine {
 	return &VMWrapper{
 		inner,
 		&sync.Mutex{},
+	}
+}
+
+// lockStore acquires the VM lock within the caller deadline.
+func (w *VMWrapper) lockStore(store wasmvm.KVStore) error {
+	caller, ok := store.(interface{ Context() context.Context })
+	if !ok || caller.Context().Done() == nil {
+		w.mu.Lock()
+		return nil
+	}
+	ctx := caller.Context()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if w.mu.TryLock() {
+			if err := ctx.Err(); err != nil {
+				w.mu.Unlock()
+				return err
+			}
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -56,7 +87,9 @@ func (w *VMWrapper) Instantiate(
 	gasLimit uint64,
 	deserCost wasmvmtypes.UFraction,
 ) (*wasmvmtypes.Response, uint64, error) {
-	w.mu.Lock()
+	if err := w.lockStore(store); err != nil {
+		return nil, 0, err
+	}
 	defer w.mu.Unlock()
 	return w.WasmerEngine.Instantiate(checksum, env, info, initMsg, store, goapi, querier, gasMeter, gasLimit, deserCost)
 }
@@ -73,7 +106,9 @@ func (w *VMWrapper) Execute(
 	gasLimit uint64,
 	deserCost wasmvmtypes.UFraction,
 ) (*wasmvmtypes.Response, uint64, error) {
-	w.mu.Lock()
+	if err := w.lockStore(store); err != nil {
+		return nil, 0, err
+	}
 	defer w.mu.Unlock()
 	return w.WasmerEngine.Execute(code, env, info, executeMsg, store, goapi, querier, gasMeter, gasLimit, deserCost)
 }
@@ -89,7 +124,9 @@ func (w *VMWrapper) Migrate(
 	gasLimit uint64,
 	deserCost wasmvmtypes.UFraction,
 ) (*wasmvmtypes.Response, uint64, error) {
-	w.mu.Lock()
+	if err := w.lockStore(store); err != nil {
+		return nil, 0, err
+	}
 	defer w.mu.Unlock()
 	return w.WasmerEngine.Migrate(checksum, env, migrateMsg, store, goapi, querier, gasMeter, gasLimit, deserCost)
 }
@@ -105,7 +142,9 @@ func (w *VMWrapper) Sudo(
 	gasLimit uint64,
 	deserCost wasmvmtypes.UFraction,
 ) (*wasmvmtypes.Response, uint64, error) {
-	w.mu.Lock()
+	if err := w.lockStore(store); err != nil {
+		return nil, 0, err
+	}
 	defer w.mu.Unlock()
 	return w.WasmerEngine.Sudo(checksum, env, sudoMsg, store, goapi, querier, gasMeter, gasLimit, deserCost)
 }
